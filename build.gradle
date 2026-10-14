@@ -1,0 +1,60 @@
+plugins {
+	id 'java'
+}
+
+repositories {
+	maven {
+		url = 'https://repo.runelite.net'
+		content { includeGroupByRegex('net\\.runelite.*') }
+	}
+	mavenCentral()
+}
+
+def runeLiteVersion = providers.gradleProperty('runeLiteVersion').getOrElse('latest.release')
+def pluginMainClass = 'com.modelpopout.ModelPopoutLauncher'
+
+dependencies {
+	compileOnly "net.runelite:client:${runeLiteVersion}"
+	testImplementation "net.runelite:client:${runeLiteVersion}"
+	testImplementation "net.runelite:jshell:${runeLiteVersion}"
+	testImplementation 'junit:junit:4.12'
+}
+
+group = 'com.modelpopout'
+version = '0.1.0'
+
+tasks.withType(JavaCompile).configureEach {
+	options.encoding = 'UTF-8'
+	options.release.set(11)
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+	preserveFileTimestamps = false
+	reproducibleFileOrder = true
+}
+
+tasks.register('run', JavaExec) {
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = pluginMainClass
+	jvmArgs '-ea'
+	args '--developer-mode', '--debug', '--safe-mode'
+}
+
+tasks.withType(Test).configureEach {
+	systemProperty 'java.awt.headless', 'true'
+	if (providers.gradleProperty('hudFixtures').isPresent()) {
+		systemProperty 'modelpopout.hudFixtures', providers.gradleProperty('hudFixtures').get()
+	}
+	if (providers.gradleProperty('capeFixtures').isPresent()) {
+		systemProperty 'modelpopout.capeFixtures', providers.gradleProperty('capeFixtures').get()
+	}
+}
+
+// Opt in on a real desktop; headless tests cannot exercise native Window.paint.
+tasks.register('desktopPresentationTest', Test) {
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	include '**/NativeWindowPresentationTest.class'
+	systemProperty 'java.awt.headless', 'false'
+	systemProperty 'modelpopout.desktopTests', 'true'
+}
