@@ -51,10 +51,13 @@ child-to-whole-surface repaint routing remain intact. No 3D, HUD, texture, anima
 capture or frame pacing calculations changed. Only one diagnostic log line was
 added to the existing metrics timer.
 
-The Java window remains undecorated. KDE-provided controls remain unchanged. Native
-KDE title-bar appearance is managed by KDE and may not follow the plugin's UI
-slider. Switching to a Java decorated frame would prevent per-pixel translucency;
-no decoration-style change was made.
+The Java window remains undecorated because per-pixel translucency requires it.
+The pending 0.1.3 pass selects one application title bar: inherited Swing controls
+when available, otherwise built-in controls with independent opaque presentation.
+The original assumption that the existing Linux bar was compositor-provided was
+incorrect; RuneLite enables inherited Swing decorations. Selection is now
+unconditionally Automatic; saved mode preferences are ignored. See DUPLICATE_TITLE_BARS.md.
+All application controls stay inside the existing full-frame buffer.
 
 ## Validation and evidence
 
@@ -90,7 +93,8 @@ Expected diagnostics on a capable desktop:
 - root/layer/surface opaque remain **false**;
 - requested/effective equal the slider value, supported=true;
 - nativeAlpha=0, configurationCapable=true, undecorated=true;
-- surfaceBackground starts with 00/4d/80/ff at 0/30/50/100 percent (without hover);
+- viewport background alpha is 00/4d/80/ff at 0/30/50/100 percent (without hover);
+  in the custom-controls pass surfaceBackground samples the independently opaque resize frame;
 - finalBufferBackground records the outermost ARGB border pixel; a desktop/LAF
   border can differ from the interior surface background;
 - destination identifies the color model used for the final draw.

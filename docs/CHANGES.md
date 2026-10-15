@@ -1,3 +1,21 @@
+# Changelog
+
+## 0.2.3 — release candidate
+
+- Add right-click Popout inspection for scene players and NPCs, placed in existing actor submenus where identity is unambiguous. Existing actions remain intact.
+- Open independent inspectors with their own cameras, live models, textures, animation and optional combat HUD. Retain the last captured model after disappearance or logout without following reused actor slots.
+- Bound inspector capture and rendering work; pause updates while minimized.
+- Select window controls automatically: reuse inherited Swing chrome or provide built-in drag, minimize, maximize/restore and close controls. Correct duplicate title bars and keep controls visible independently of viewport opacity.
+- Remember reachable main-window bounds and share camera input across viewports.
+- Remove the secondary settings sidebar and performance labels. Use the standard RuneLite plugin configuration; retain saved settings and the original launch icon.
+- Kill Clog/Hiscores integration is not implemented. The integration document is a specification only.
+
+Includes accepted development revisions 0.1.1–0.1.3. Windows VM verification of the final corrected build is required before Hub submission. The published baseline remains 0.1.0 until the update is accepted.
+
+---
+
+The following is the historical initial-release inventory and validation record.
+
 # File inventory and final validation
 
 The project directory is now `model-popout`; production/test packages use `com.modelpopout`. Historical settings retain their original group identifier deliberately. Paths below are repository-relative. This inventory compares the complete verified pre-audit implementation with the final public source tree, including the owner-authorized Always on Top and combat HUD additions.

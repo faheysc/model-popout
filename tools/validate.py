@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import zipfile
+import xml.etree.ElementTree as ET
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--runelite-version', default='1.13.1')
@@ -31,14 +32,24 @@ cache = Path(os.environ.get('GRADLE_USER_HOME', str(Path.home()/'.gradle'))) / '
 groups = {'net.runelite', 'net.runelite.arn', 'com.google.inject', 'com.google.inject.extensions',
           'com.google.guava', 'com.google.code.findbugs', 'javax.inject', 'org.slf4j',
           'com.google.code.gson', 'org.hamcrest', 'junit', 'aopalliance', 'net.sf.jopt-simple'}
+# RuneLiteLAF tests need the same FlatLaf dependency as the selected client.
+flatlaf_versions = set()
+for pom in (cache/'net.runelite/client'/args.runelite_version).glob('*/*.pom'):
+    tree = ET.parse(pom)
+    ns = {'m': 'http://maven.apache.org/POM/4.0.0'}
+    for dep in tree.findall('m:dependencies/m:dependency', ns):
+        if dep.findtext('m:groupId', namespaces=ns) == 'net.runelite' and dep.findtext('m:artifactId', namespaces=ns) == 'flatlaf':
+            flatlaf_versions.add(dep.findtext('m:version', namespaces=ns))
 jars = []
 for p in sorted(cache.rglob('*.jar')):
     relative = p.relative_to(cache)
     if relative.parts[0] not in groups or p.name.endswith(('-sources.jar', '-javadoc.jar')):
         continue
-    if relative.parts[0] == 'net.runelite' and (relative.parts[1] not in {'client', 'runelite-api', 'jshell'}
-                                               or relative.parts[2] != args.runelite_version):
-        continue
+    if relative.parts[0] == 'net.runelite':
+        allowed = (relative.parts[1] in {'client', 'runelite-api', 'jshell'} and relative.parts[2] == args.runelite_version
+                   or relative.parts[1] == 'flatlaf' and relative.parts[2] in flatlaf_versions)
+        if not allowed:
+            continue
     jars.append(p)
 if not any(p.name == 'client-'+args.runelite_version+'.jar' for p in jars):
     parser.error('Requested RuneLite dependencies are not cached; run ./gradlew build online first.')
@@ -64,7 +75,8 @@ run(jdk/'java',*options,'-cp',runtime,'JavaTestRunner',
     *['com.modelpopout.'+p.stem for p in sorted((root/'src/test/java/com/modelpopout').glob('*Test.java'))])
 if args.benchmark:
     run(jdk/'java',*options,'-cp',runtime,'com.modelpopout.TextureRenderBenchmark')
-jar = root/'build/libs/model-popout-0.1.0.jar'
+metadata = dict(line.split('=',1) for line in (root/'runelite-plugin.properties').read_text().splitlines() if '=' in line)
+jar = root/f"build/libs/model-popout-{metadata['version']}.jar"
 jar.parent.mkdir(parents=True,exist_ok=True)
 # Deterministic fallback artifact; production classes and licenses only, never test fixtures.
 entries = {str(p.relative_to(main)):p.read_bytes() for p in main.rglob('*') if p.is_file()}

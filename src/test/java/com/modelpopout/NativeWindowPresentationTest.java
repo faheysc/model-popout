@@ -28,7 +28,7 @@ public class NativeWindowPresentationTest
         Assume.assumeTrue("Desktop does not support per-pixel translucent windows",supported[0]);
         SwingUtilities.invokeAndWait(() -> {
             BufferedImage screen = new BufferedImage(120,120,BufferedImage.TYPE_INT_ARGB);
-            screen.setRGB(10,10,Color.RED.getRGB());
+            screen.setRGB(60,60,Color.RED.getRGB());
             JFrame legacy = new JFrame();
             legacy.setUndecorated(true);
             legacy.setBackground(new Color(0,0,0,0));
@@ -37,9 +37,9 @@ public class NativeWindowPresentationTest
             {
                 @Override protected void paintComponent(Graphics g)
                 {
-                    during[0] = screen.getRGB(10,10);
+                    during[0] = screen.getRGB(60,60);
                     g.setColor(Color.GREEN);
-                    g.fillRect(10,10,1,1);
+                    g.fillRect(60,60,1,1);
                 }
             });
             legacy.getRootPane().setDoubleBuffered(false);
@@ -72,20 +72,20 @@ public class NativeWindowPresentationTest
                     viewer.applyBackgroundOpacity(opacity);
                     for (int i = 0; i < 50; i++)
                     {
-                        screen.setRGB(10,10,Color.RED.getRGB());
+                        screen.setRGB(60,60,Color.RED.getRGB());
                         boolean[] called = {false};
                         viewer.setModelPainter(g -> {
                             called[0] = true;
                             assertTrue("Presentation diagnostic must identify the protected top-level path",viewer.isPaintingWindow());
                             assertEquals("Native destination cleared before completed hierarchy",
-                                Color.RED.getRGB(),screen.getRGB(10,10));
+                                Color.RED.getRGB(),screen.getRGB(60,60));
                             g.setColor(Color.GREEN);
-                            g.fillRect(10,10,1,1);
+                            g.fillRect(60,60,1,1);
                         });
                         viewer.paint(target);
                         assertFalse(viewer.isPaintingWindow());
                         assertTrue(called[0]);
-                        assertEquals(Color.GREEN.getRGB(),screen.getRGB(10,10));
+                        assertEquals(Color.GREEN.getRGB(),screen.getRGB(60,60));
                     }
                 }
             }

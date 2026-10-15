@@ -16,6 +16,11 @@ public interface ModelPopoutConfig extends Config
     String HITSPLATS_KEY = "showHitsplats";
     String HP_BARS_KEY = "showHpBars";
     String ALWAYS_ON_TOP_KEY = "alwaysOnTop";
+    String INSPECTION_KEY = "rightClickInspection";
+
+    @ConfigItem(keyName = INSPECTION_KEY, name = "Enable Right-Click Inspection", position = 7,
+        description = "Add Popout to scene players and NPCs. Opens independent model windows without interacting with the actor.")
+    default boolean rightClickInspection() { return true; }
 
     @Range(min = 1, max = 50)
     @ConfigItem(keyName = "refreshRate", name = "Model capture FPS", position = 0,
@@ -32,7 +37,7 @@ public interface ModelPopoutConfig extends Config
     @Range(min = 0, max = 100)
     @Units(Units.PERCENT)
     @ConfigItem(keyName = OPACITY_KEY, name = "Background opacity", position = 2,
-        description = "Window content: 0% reveals the desktop, 100% is opaque. Models keep intrinsic alpha. Native KDE title bars remain desktop-controlled. Unsupported desktops use an opaque background.")
+        description = "Window content: 0% reveals the desktop, 100% is opaque. Models keep intrinsic alpha. Window controls stay visible independently. Unsupported desktops use an opaque background.")
     default int backgroundOpacity() { return 100; }
     @ConfigItem(keyName = "renderTarget", name = "Rendering target", position = 3,
         description = "Independent viewer render/presentation target. Latest pose is held; this does not create skeletal animation frames or change RuneLite timing.")

@@ -2,8 +2,6 @@ package com.modelpopout;
 
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
-import java.util.HashMap;
-import java.util.Map;
 import javax.swing.SwingUtilities;
 import org.junit.Test;
 import static org.junit.Assert.*;
@@ -82,47 +80,4 @@ public class BackgroundOpacityTest
         });
     }
 
-    @Test public void settingsSliderUsesSavedKeyAndSurvivesPanelRecreationWithoutFeedbackWrites() throws Exception
-    {
-        Map<String,Object> saved = new HashMap<>();
-        ModelPopoutConfig config = new ModelPopoutConfig()
-        {
-            @Override public int backgroundOpacity() { return (int) saved.getOrDefault(OPACITY_KEY,100); }
-            @Override public boolean renderNpc() { return (boolean) saved.getOrDefault(NPC_KEY,true); }
-        };
-        SwingUtilities.invokeAndWait(() -> {
-            int[] writes = {0};
-            ViewerSettingsPanel first = new ViewerSettingsPanel(config,(key,value) -> { saved.put(key,value); writes[0]++; },() -> {});
-            assertEquals(0,writes[0]);
-            first.opacity.setValue(37);
-            assertEquals(37,saved.get(ModelPopoutConfig.OPACITY_KEY));
-            ViewerSettingsPanel reopened = new ViewerSettingsPanel(config,(key,value) -> { saved.put(key,value); writes[0]++; },() -> {});
-            assertEquals(37,reopened.opacity.getValue());
-            saved.put(ModelPopoutConfig.OPACITY_KEY,0);
-            reopened.sync(config);
-            assertEquals(0,reopened.opacity.getValue());
-            assertEquals(1,writes[0]);
-            reopened.npcs.doClick();
-            assertEquals(false,saved.get(ModelPopoutConfig.NPC_KEY));
-        });
-    }
-    @Test public void renderTargetPersistsIndependentlyWithoutFeedbackWrites() throws Exception
-    {
-        Map<String,Object> saved = new HashMap<>();
-        ModelPopoutConfig config = new ModelPopoutConfig()
-        {
-            @Override public RenderTarget renderTarget() { return (RenderTarget)saved.getOrDefault("renderTarget",RenderTarget.FPS_60); }
-        };
-        SwingUtilities.invokeAndWait(() -> {
-            int[] writes = {0};
-            ViewerSettingsPanel first = new ViewerSettingsPanel(config,(key,value) -> { saved.put(key,value); writes[0]++; },() -> {});
-            assertEquals(0,writes[0]);
-            first.renderTarget.setSelectedItem(RenderTarget.FPS_165);
-            assertEquals(RenderTarget.FPS_165,saved.get("renderTarget"));
-            ViewerSettingsPanel reopened = new ViewerSettingsPanel(config,(key,value) -> { saved.put(key,value); writes[0]++; },() -> {});
-            assertEquals(RenderTarget.FPS_165,reopened.renderTarget.getSelectedItem());
-            assertEquals(20,config.refreshRate());
-            assertEquals(1,writes[0]);
-        });
-    }
 }

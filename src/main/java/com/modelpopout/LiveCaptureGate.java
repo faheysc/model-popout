@@ -45,12 +45,12 @@ final class LiveCaptureGate
     }
 
     /** Returns a lifecycle ticket, or -1 if throttled, inactive, or awaiting an EDT handoff. */
-    synchronized long acquire(long now, boolean force)
+    synchronized long acquire(long now)
     {
         if (!open || !loggedIn || pending) return -1;
-        if (!force && scheduled && now - nextDue < 0) return -1;
+        if (scheduled && now - nextDue < 0) return -1;
         long period = 1_000_000_000L / fps;
-        if (force || !scheduled)
+        if (!scheduled)
         {
             nextDue = now + period;
         }

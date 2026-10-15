@@ -1,8 +1,10 @@
+> Historical development record. Current release status and accepted revisions are recorded in [DEVELOPMENT_HISTORY.md](DEVELOPMENT_HISTORY.md); final validation is recorded in [RELEASE_0.2.3.md](RELEASE_0.2.3.md). Earlier authorization and pending-state statements below apply to that original pass.
+
 # Local commit and submission verification
 
-The owner verified the latest implementation on Bazzite/KDE and accepts the native
-title bar's independent opacity. No production functionality was changed during
-this review.
+Historical review below predates the custom window-controls pass. Its KDE title-bar
+assumption was not portable. Current window controls await target-desktop verification;
+see WINDOW_CONTROLS.md. No commit or publication is authorized by the current task.
 
 ## Initial precommit review status
 

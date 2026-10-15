@@ -21,7 +21,9 @@ dependencies {
 }
 
 group = 'com.modelpopout'
-version = '0.1.0'
+def pluginMetadata = new Properties()
+file('runelite-plugin.properties').withInputStream { pluginMetadata.load(it) }
+version = pluginMetadata.getProperty('version')
 
 tasks.withType(JavaCompile).configureEach {
 	options.encoding = 'UTF-8'
@@ -55,6 +57,10 @@ tasks.register('desktopPresentationTest', Test) {
 	testClassesDirs = sourceSets.test.output.classesDirs
 	classpath = sourceSets.test.runtimeClasspath
 	include '**/NativeWindowPresentationTest.class'
+	include '**/NativeInspectionWindowTest.class'
+	include '**/NativeWindowControlsTest.class'
+	include '**/NativeWindowDecorationTest.class'
+	include '**/NativePluginConfigurationTest.class'
 	systemProperty 'java.awt.headless', 'false'
 	systemProperty 'modelpopout.desktopTests', 'true'
 }

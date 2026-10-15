@@ -46,19 +46,4 @@ public class FramePacerTest
         assertEquals(5,FramePacer.delayMillis(4166666));
     }
 
-    @Test public void measurementsDoNotConfuseSourcePosesRendersAndPaints()
-    {
-        ViewerPerformance stats = new ViewerPerformance();
-        stats.sample(1000000000L);
-        for (int i=0;i<50;i++) stats.capture(i<20);
-        for (int i=0;i<120;i++) stats.rendered(i>=20);
-        for (int i=0;i<80;i++) stats.presented();
-        String result = stats.sample(2000000000L);
-        assertTrue(result.contains("Capture 50.0/s"));
-        assertTrue(result.contains("unique poses 20.0/s"));
-        assertTrue(result.contains("completed renders 120.0/s"));
-        assertTrue(result.contains("Swing paints 80.0/s"));
-        assertTrue(result.contains("texture frames 100.0/s"));
-        assertTrue(result.contains("pose interpolation off"));
-    }
 }

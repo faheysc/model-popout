@@ -10,6 +10,26 @@ final class WindowGeometry
     static final int NORTH = 1, EAST = 2, SOUTH = 4, WEST = 8;
     static final int BORDER = 6;
 
+    // All coordinates are AWT user-space units, including negative monitor origins.
+    static Rectangle move(Rectangle start, java.awt.Point pressed, java.awt.Point current)
+    {
+        return new Rectangle(start.x+current.x-pressed.x,start.y+current.y-pressed.y,start.width,start.height);
+    }
+
+    static boolean titleReachable(Rectangle window, Rectangle monitor)
+    {
+        Rectangle title = new Rectangle(window.x,window.y,window.width,32);
+        Rectangle intersection = title.intersection(monitor);
+        return intersection.width >= Math.min(window.width,160) && intersection.height >= 26;
+    }
+
+    static Rectangle usable(Rectangle monitor, java.awt.Insets insets)
+    {
+        return new Rectangle(monitor.x+insets.left,monitor.y+insets.top,
+            Math.max(1,monitor.width-insets.left-insets.right),
+            Math.max(1,monitor.height-insets.top-insets.bottom));
+    }
+
     static int edges(int x, int y, int width, int height)
     {
         int edges = 0;

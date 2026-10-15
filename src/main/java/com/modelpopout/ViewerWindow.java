@@ -25,7 +25,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import javax.swing.SwingUtilities;
 
-/** Buffered per-pixel viewer with KDE/native window controls, edge resizing and opaque fallback. */
+/** Buffered per-pixel viewer with shared Swing window controls, edge resizing and opaque fallback. */
 final class ViewerWindow extends JFrame
 {
     private static final Logger LOG = LoggerFactory.getLogger(ViewerWindow.class);
@@ -35,6 +35,9 @@ final class ViewerWindow extends JFrame
     private int requestedOpacity = 100;
     private boolean supported;
     private boolean paintingWindow;
+    private Rectangle restoreBounds;
+    private final WindowTitleBar titleBar;
+    private final boolean inheritedSwingDecorations;
     private Runnable presented = () -> {};
 
     static ViewerWindow create()
@@ -64,20 +67,65 @@ final class ViewerWindow extends JFrame
     private ViewerWindow(GraphicsConfiguration configuration, boolean translucent)
     {
         super("Model Popout",configuration);
+        inheritedSwingDecorations = getRootPane().getWindowDecorationStyle() == JRootPane.FRAME;
         translucentCreated = translucent;
         supported = translucent;
         setUndecorated(true);
+        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        titleBar = new WindowTitleBar(new WindowTitleBar.Actions()
+        {
+            public void minimize() { setExtendedState(getExtendedState() | Frame.ICONIFIED); }
+            public void maximize() { toggleMaximize(); }
+            public void close() { dispatchEvent(new java.awt.event.WindowEvent(ViewerWindow.this,java.awt.event.WindowEvent.WINDOW_CLOSING)); }
+            public Rectangle bounds() { return getBounds(); }
+            public boolean maximized() { return restoreBounds != null; }
+            public void move(Rectangle bounds) { setBounds(bounds); }
+        });
+        surface.titleBar = titleBar;
+        surface.add(titleBar,BorderLayout.NORTH);
+        addPropertyChangeListener("title",e -> titleBar.title.setText(getTitle()));
         setContentPane(surface);
         keepPresentationNonOpaque(getRootPane());
         getRootPane().setDoubleBuffered(false);
         surface.setBorder(BorderFactory.createEmptyBorder(6,6,6,6));
         installResize(surface);
+        applyWindowControls();
         addPropertyChangeListener("graphicsConfiguration",e -> SwingUtilities.invokeLater(() -> {
             if (Boolean.getBoolean("modelpopout.paintDiagnostics"))
                 LOG.debug("Model Popout graphics configuration changed: old={} new={} displayable={}",e.getOldValue(),e.getNewValue(),isDisplayable());
             if (isDisplayable()) applyBackgroundOpacity(requestedOpacity);
         }));
     }
+
+    void applyWindowControls()
+    {
+        assert SwingUtilities.isEventDispatchThread();
+        // The global JFrame default may install a Swing title bar even on an undecorated frame.
+        // Never change that global default: it also controls RuneLite and unrelated plugins.
+        boolean swing = useSwingDecorations(inheritedSwingDecorations,
+            javax.swing.UIManager.getLookAndFeel().getSupportsWindowDecorations());
+        int style = swing ? JRootPane.FRAME : JRootPane.NONE;
+        if (getRootPane().getWindowDecorationStyle() != style) getRootPane().setWindowDecorationStyle(style);
+        boolean builtIn = !swing;
+        if (builtIn)
+        {
+            surface.titleBar = titleBar;
+            if (titleBar.getParent() != surface) surface.add(titleBar,BorderLayout.NORTH);
+        }
+        else
+        {
+            surface.remove(titleBar);
+            surface.titleBar = null;
+        }
+        keepPresentationNonOpaque(getRootPane());
+        getRootPane().revalidate();
+        // Repaint through the existing top-level composition boundary after relayout.
+        repaint();
+    }
+
+    static boolean useSwingDecorations(boolean inherited, boolean supported) { return inherited && supported; }
+
+    boolean hasBuiltInControls() { return surface.titleBar != null; }
 
     void applyBackgroundOpacity(int requested)
     {
@@ -111,6 +159,15 @@ final class ViewerWindow extends JFrame
                 previous.getAlpha(),background.getAlpha(),new Throwable("Background transition caller"));
     }
 
+    @Override protected JRootPane createRootPane() { return new PresentationRoot(); }
+
+    // Look-and-feel title bars are siblings of Surface, so their dirty paints also need
+    // an origin above all root children before ascending to the buffered Window.paint.
+    static final class PresentationRoot extends JRootPane
+    {
+        @Override protected boolean isPaintingOrigin() { return true; }
+    }
+
     static void keepPresentationNonOpaque(JRootPane root)
     {
         // JFrame's constructor invokes setBackground before ViewerWindow fields initialize.
@@ -132,11 +189,12 @@ final class ViewerWindow extends JFrame
     String transparencyDiagnostics()
     {
         Color background = getBackground();
-        return "requested="+requestedOpacity+" effective="+effectiveOpacity()+" supported="+supported
+        return "windowId="+Integer.toHexString(System.identityHashCode(this))+" requested="+requestedOpacity+" effective="+effectiveOpacity()+" supported="+supported
             +" nativeAlpha="+(background==null?-1:background.getAlpha())
             +" configurationCapable="+getGraphicsConfiguration().isTranslucencyCapable()
             +" configurationPixelBits="+getGraphicsConfiguration().getColorModel().getPixelSize()
-            +" undecorated="+isUndecorated()+" surfaceBackground="+surface.backgroundArgb()
+            +" inheritedSwingDecorations="+inheritedSwingDecorations+" controls=Automatic"+" swingDecorationStyle="+getRootPane().getWindowDecorationStyle()
+            +" builtInControls="+hasBuiltInControls()+" undecorated="+isUndecorated()+" surfaceBackground="+surface.backgroundArgb()
             +" finalBufferBackground="+presentation.backgroundArgb()+" destination="+presentation.destinationFormat();
     }
 
@@ -159,6 +217,7 @@ final class ViewerWindow extends JFrame
 
     private void paintHierarchy(Graphics2D graphics)
     {
+        Surface.disableBuffering(getRootPane());
         super.paint(graphics);
     }
 
@@ -171,7 +230,7 @@ final class ViewerWindow extends JFrame
             private int edges;
             @Override public void mouseMoved(MouseEvent event)
             {
-                int hit = (getExtendedState() & Frame.MAXIMIZED_BOTH) != 0 ? 0
+                int hit = (restoreBounds != null || (getExtendedState() & Frame.MAXIMIZED_BOTH) != 0) ? 0
                     : WindowGeometry.edges(event.getX(),event.getY(),component.getWidth(),component.getHeight());
                 component.setCursor(Cursor.getPredefinedCursor(WindowGeometry.cursor(hit)));
             }
@@ -181,7 +240,7 @@ final class ViewerWindow extends JFrame
             }
             @Override public void mousePressed(MouseEvent event)
             {
-                if (!SwingUtilities.isLeftMouseButton(event) || (getExtendedState() & Frame.MAXIMIZED_BOTH) != 0) return;
+                if (!SwingUtilities.isLeftMouseButton(event) || (restoreBounds != null || (getExtendedState() & Frame.MAXIMIZED_BOTH) != 0)) return;
                 edges = WindowGeometry.edges(event.getX(),event.getY(),component.getWidth(),component.getHeight());
                 if (edges == 0) return;
                 pointer = event.getLocationOnScreen(); bounds = getBounds();
@@ -199,6 +258,31 @@ final class ViewerWindow extends JFrame
             }
         };
         component.addMouseListener(listener); component.addMouseMotionListener(listener);
+    }
+
+    Rectangle normalBounds() { return new Rectangle(restoreBounds == null ? getBounds() : restoreBounds); }
+
+    void toggleMaximize()
+    {
+        assert SwingUtilities.isEventDispatchThread();
+        if ((getExtendedState() & Frame.MAXIMIZED_BOTH) != 0)
+        {
+            setExtendedState(getExtendedState() & ~Frame.MAXIMIZED_BOTH);
+            return;
+        }
+        if (restoreBounds == null)
+        {
+            restoreBounds = getBounds();
+            GraphicsConfiguration gc = getGraphicsConfiguration();
+            setBounds(WindowGeometry.usable(gc.getBounds(),getToolkit().getScreenInsets(gc)));
+        }
+        else
+        {
+            Rectangle restored = restoreBounds;
+            restoreBounds = null;
+            setBounds(restored);
+        }
+        titleBar.maximize.setText(restoreBounds == null ? "□" : "❐");
     }
 
     void revealControls() { surface.reveal = true; surface.repaint(); }
@@ -240,6 +324,7 @@ final class ViewerWindow extends JFrame
 
     static final class Surface extends JPanel
     {
+        WindowTitleBar titleBar;
         int opacity = 100;
         boolean reveal;
         Consumer<Graphics2D> modelPainter = g -> {};
@@ -271,6 +356,7 @@ final class ViewerWindow extends JFrame
                 layer.setComposite(AlphaComposite.SrcOver);
                 // No shared Swing back buffer may bypass this layer.
                 disableBuffering(this);
+                // paintChildren below omits chrome; it is composited once after the viewport.
                 super.paint(layer);
             }
             finally { layer.dispose(); }
@@ -283,7 +369,31 @@ final class ViewerWindow extends JFrame
                 result.setComposite(AlphaComposite.SrcOver.derive(effective / 100f));
                 result.drawImage(ui,0,0,null);
                 result.setComposite(AlphaComposite.SrcOver);
-                modelPainter.accept(result);
+                Graphics2D models = (Graphics2D) result.create();
+                try
+                {
+                    if (titleBar != null)
+                        models.clipRect(WindowGeometry.BORDER,titleBar.getY()+titleBar.getHeight(),
+                            Math.max(0,width-2*WindowGeometry.BORDER),
+                            Math.max(0,height-titleBar.getY()-titleBar.getHeight()-WindowGeometry.BORDER));
+                    modelPainter.accept(models);
+                }
+                finally { models.dispose(); }
+                // Paint chrome at full alpha, into the same private completed frame.
+                if (titleBar != null)
+                {
+                    // Fully transparent native pixels may be click-through (notably on Windows).
+                    // Keep the six-pixel resize targets visibly opaque, independently of viewport alpha.
+                    result.setColor(new Color(38,38,38));
+                    int edge = WindowGeometry.BORDER;
+                    result.fillRect(0,0,width,edge);
+                    result.fillRect(0,height-edge,width,edge);
+                    result.fillRect(0,0,edge,height);
+                    result.fillRect(width-edge,0,edge,height);
+                    Graphics2D chrome = (Graphics2D) result.create(titleBar.getX(),titleBar.getY(),titleBar.getWidth(),titleBar.getHeight());
+                    try { titleBar.paint(chrome); }
+                    finally { chrome.dispose(); }
+                }
             }
             finally { result.dispose(); }
             Graphics2D target = (Graphics2D) graphics.create();
@@ -294,6 +404,18 @@ final class ViewerWindow extends JFrame
             }
             finally { target.dispose(); }
             presented.run();
+        }
+
+        @Override protected void paintChildren(Graphics graphics)
+        {
+            if (titleBar == null) { super.paintChildren(graphics); return; }
+            Graphics2D viewport = (Graphics2D) graphics.create();
+            try
+            {
+                viewport.clipRect(0,titleBar.getY()+titleBar.getHeight(),getWidth(),getHeight());
+                super.paintChildren(viewport);
+            }
+            finally { viewport.dispose(); }
         }
 
         String backgroundArgb()

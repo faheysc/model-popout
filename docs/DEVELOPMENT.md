@@ -31,3 +31,20 @@ python3 tools/validate.py --cape-fixtures /path/to/local/cape-fixtures --hud-fix
 This compiles with `--release 11`, runs JUnit, records dependency hashes, and creates a deterministic production-only JAR. It is an offline fallback, not proof that Plugin Hub CI or Gradle passed. Its synthetic benchmark reports raster milliseconds per frame, not capture rate, monitor refresh, or real desktop throughput.
 
 Before publishing, run the [in-game checklist](IN_GAME_CHECKLIST.md) and review the [submission notes](SUBMISSION.md). Keep game-cache assets, local research, generated output, IDE state, and verified backups outside the public source tree. Do not publish a shaded RuneLite development client as the Plugin Hub artifact.
+
+## Matching dependency versions during validation
+
+Gradle defaults to `latest.release`; `tools/validate.py` defaults to `1.13.1`.
+Without explicit arguments these paths can validate different RuneLite APIs.
+The current regression baseline is Java 11 / RuneLite 1.13.2. Use both overrides:
+
+```sh
+./gradlew --offline clean test jar desktopPresentationTest -PruneLiteVersion=1.13.2
+python3 tools/validate.py --runelite-version 1.13.2
+```
+
+Set `JAVA_HOME` to Java 11. Native desktop tests need a real display. Supply the
+existing cape/HUD fixture arguments to each tool when fixtures are available.
+No dependency defaults were changed during the targeted cleanup. Explicit matching
+versions are the smallest correction for validation runs; changing the offline
+pin alone would still leave Gradle's moving default able to diverge.

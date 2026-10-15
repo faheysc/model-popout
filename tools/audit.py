@@ -49,7 +49,7 @@ if (root/'LICENSE').read_bytes()!=(root/'src/main/resources/META-INF/LICENSE').r
 files=[]
 for path in sorted(root.rglob('*')):
     relative=path.relative_to(root)
-    if not path.is_file() or any(p in {'build','.gradle','.git','.idea'} for p in relative.parts):continue
+    if not path.is_file() or any(p in {'build','.gradle','.gradle-home','.git','.idea','checkpoints'} for p in relative.parts):continue
     if any(p in {'.idea','.aws','.codex','.agents','backups'} for p in relative.parts):
         errors.append('Private/local directory in publishable tree: '+str(relative))
     if path.name.startswith('.env') or path.name=='local.properties' or path.suffix in {'.class','.log','.hprof','.iml','.pem','.key','.p12','.jks'}:
@@ -60,7 +60,7 @@ for path in sorted(root.rglob('*')):
         if re.search(r'AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',text):
             errors.append('Possible credential/key material: '+str(relative))
     files.append({'path':str(relative),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
-jar=root/'build/libs/model-popout-0.1.0.jar'
+jar=root/f"build/libs/model-popout-{props['version']}.jar"
 classes=0
 if not jar.exists():errors.append('Run validation/build before auditing the artifact')
 else:

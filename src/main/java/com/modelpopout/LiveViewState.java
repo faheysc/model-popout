@@ -39,6 +39,14 @@ final class LiveViewState
         return true;
     }
 
+    /** Inspector-only semantic transformation: refit once, retaining the user's camera and worker slot. */
+    void reframeModel(ModelSnapshot next)
+    {
+        modelSession++;
+        framing=null;
+        updateModel(next,true);
+    }
+
     boolean removeNpc(long key)
     {
         return npcKey == key && updateNpc(null, -1);

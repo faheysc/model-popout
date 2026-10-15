@@ -4,11 +4,6 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
-import java.awt.Point;
-import java.awt.event.MouseAdapter;
-import java.util.concurrent.atomic.AtomicLong;
-import java.awt.event.MouseEvent;
-import java.awt.event.MouseWheelEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
@@ -21,7 +16,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import com.google.inject.Provides;
 import javax.inject.Inject;
 import javax.swing.JFrame;
-import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import net.runelite.api.Client;
@@ -39,6 +33,8 @@ import net.runelite.api.events.InteractingChanged;
 import net.runelite.api.events.NpcSpawned;
 import net.runelite.api.events.NpcChanged;
 import net.runelite.api.events.NpcDespawned;
+import net.runelite.api.events.PlayerDespawned;
+import net.runelite.api.events.MenuOpened;
 import net.runelite.api.events.PostClientTick;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.events.ConfigChanged;
@@ -71,7 +67,6 @@ public class ModelPopoutPlugin extends Plugin
     private final LatestHudMailbox hudMailbox = new LatestHudMailbox(SwingUtilities::invokeLater,this::receiveHud);
     private final NpcTargetTracker npcTargets = new NpcTargetTracker();
     private final LiveCaptureGate captures = new LiveCaptureGate();
-    private final AtomicLong lifecycle = new AtomicLong();
     private volatile boolean running;
     private volatile boolean viewerVisible;
     private volatile TextureReferences textureReferences;
@@ -81,13 +76,10 @@ public class ModelPopoutPlugin extends Plugin
     private NavigationButton navigation;
     // Everything below is confined to the Swing EDT.
     private ViewerWindow window;
-    private ViewerSettingsPanel settingsPanel;
-    private NavigationButton settingsNavigation;
     private ModelPanel panel;
     private RenderJob worker;
     private volatile ExecutorService renderExecutor;
     private final FramePacer pacer = new FramePacer();
-    private final ViewerPerformance performance = new ViewerPerformance();
     private final Timer renderWake = new Timer(1,e -> requestRender());
     private final Timer presentWake = new Timer(1,e -> presentFrame());
     private final boolean paintDiagnostics = Boolean.getBoolean("modelpopout.paintDiagnostics");
@@ -97,7 +89,6 @@ public class ModelPopoutPlugin extends Plugin
     private long tracePaintAt;
     private long hudDeliveries, modelPublications, modelDraws, drawsOutsideWindowPaint, playerRebindings;
     private final Timer metricsWake = new Timer(1000,e -> {
-        if (settingsPanel != null) settingsPanel.showPerformance(performance.sample(System.nanoTime()));
         if (playerTrace != null) LOG.debug("Model Popout player trace: freeze={} disableHud={}\n{}",diagnosticFreeze,diagnosticNoHud,playerTrace.drain());
         if (paintDiagnostics && window != null) LOG.debug("Model Popout transparency audit: {}",window.transparencyDiagnostics());
         if (paintDiagnostics && window != null)
@@ -107,9 +98,8 @@ public class ModelPopoutPlugin extends Plugin
                 window.getContentPane().isOpaque(),config.showHitsplats(),config.showHpBars());
     });
     private CompletedFrame pendingFrame;
-    private double measuredTexturePhase = Double.NaN;
-    private TextureSet measuredTextures = TextureSet.EMPTY;
     private final LiveViewState viewState = new LiveViewState();
+    private volatile InspectionManager inspectors;
 
     @Provides
     ModelPopoutConfig provideConfig(ConfigManager manager)
@@ -120,7 +110,6 @@ public class ModelPopoutPlugin extends Plugin
     @Override
     protected void startUp()
     {
-        long session = lifecycle.incrementAndGet();
         hudAssets = new HudAssets(id -> client.getIndexConfig() == null ? null : client.getIndexConfig().loadData(32,id),
             id -> spriteManager.getSprite(id,0),client::getVarbitValue,client::getVarpValue);
         captures.setRate(config.refreshRate());
@@ -131,24 +120,18 @@ public class ModelPopoutPlugin extends Plugin
         });
         clientTextures = TextureSet.EMPTY;
         running = true;
-        navigation = NavigationButton.builder().tooltip("Open Model Popout")
-            .icon(icon()).priority(10).onClick(() -> SwingUtilities.invokeLater(this::openWindow)).build();
+        inspectors = new InspectionManager(client,clientThread,config,spriteManager);
+        navigation = createLaunchButton();
         toolbar.addNavigation(navigation);
-        SwingUtilities.invokeLater(() -> {
-            if (!running || lifecycle.get() != session) return;
-            settingsPanel = new ViewerSettingsPanel(config,
-                (key,value) -> configManager.setConfiguration(ModelPopoutConfig.GROUP,key,value),this::openWindow);
-            settingsNavigation = NavigationButton.builder().tooltip("Model Popout settings")
-                .icon(settingsIcon()).priority(11).panel(settingsPanel).build();
-            toolbar.addNavigation(settingsNavigation);
-        });
     }
 
     @Override
     protected void shutDown()
     {
         running = false;
-        lifecycle.incrementAndGet();
+        InspectionManager closingInspectors = inspectors;
+        inspectors = null;
+        if (closingInspectors != null) closingInspectors.stop();
         hudTracker.clear(); hudMailbox.clear(); clientHud = null;
         textureReferences = null; clientTextures = TextureSet.EMPTY;
         captures.close();
@@ -159,8 +142,6 @@ public class ModelPopoutPlugin extends Plugin
         SwingUtilities.invokeLater(() -> {
             renderWake.stop(); presentWake.stop(); metricsWake.stop();
             if (window != null) window.dispose();
-            if (settingsNavigation != null) toolbar.removeNavigation(settingsNavigation);
-            settingsNavigation = null; settingsPanel = null;
         });
     }
 
@@ -168,10 +149,11 @@ public class ModelPopoutPlugin extends Plugin
     public void onConfigChanged(ConfigChanged event)
     {
         if (!ModelPopoutConfig.GROUP.equals(event.getGroup())) return;
+        InspectionManager currentInspectors = inspectors;
+        if (currentInspectors != null) currentInspectors.settingsChanged();
         if ("refreshRate".equals(event.getKey())) captures.setRate(config.refreshRate());
         if (ModelPopoutConfig.NPC_KEY.equals(event.getKey())) npcTargets.clear();
         SwingUtilities.invokeLater(() -> {
-            if (settingsPanel != null) settingsPanel.sync(config);
             if ("renderTarget".equals(event.getKey()))
             {
                 pacer.setTarget(config.renderTarget());
@@ -212,6 +194,8 @@ public class ModelPopoutPlugin extends Plugin
     @Subscribe
     public void onNpcDespawned(NpcDespawned event)
     {
+        InspectionManager currentInspectors = inspectors;
+        if (currentInspectors != null) currentInspectors.despawned(event.getNpc());
         long key = npcTargets.despawned(event.getNpc());
         if (key < 0) return;
         hudTracker.selectNpc(null,-1);
@@ -231,11 +215,15 @@ public class ModelPopoutPlugin extends Plugin
         samplePlayer();
         sampleTextures();
         sampleHud();
+        InspectionManager currentInspectors = inspectors;
+        if (currentInspectors != null) currentInspectors.tick();
     }
 
     @Subscribe
     public void onGameStateChanged(GameStateChanged event)
     {
+        InspectionManager currentInspectors = inspectors;
+        if (currentInspectors != null) currentInspectors.gameStateChanged(event.getGameState());
         boolean loggedIn = event.getGameState() == GameState.LOGGED_IN;
         long token = captures.setLoggedIn(loggedIn);
         if (loggedIn) return;
@@ -248,6 +236,21 @@ public class ModelPopoutPlugin extends Plugin
                 clearModel();
             }
         });
+    }
+
+    // Interface Styles condenses players at priority 1; inspect existing submenus after ordinary handlers too.
+    @Subscribe(priority = -1)
+    public void onMenuOpened(MenuOpened event)
+    {
+        InspectionManager currentInspectors = inspectors;
+        if (currentInspectors != null) currentInspectors.menuOpened();
+    }
+
+    @Subscribe
+    public void onPlayerDespawned(PlayerDespawned event)
+    {
+        InspectionManager currentInspectors = inspectors;
+        if (currentInspectors != null) currentInspectors.despawned(event.getPlayer());
     }
 
     private void openWindow()
@@ -282,7 +285,7 @@ public class ModelPopoutPlugin extends Plugin
         captures.open();
         pacer.setTarget(config.renderTarget());
         renderWake.setRepeats(false); presentWake.setRepeats(false);
-        performance.sample(System.nanoTime()); metricsWake.start();
+        if (paintDiagnostics) metricsWake.start();
         viewState.resetFraming();
         viewState.setCamera(CameraView.DEFAULT);
         viewState.setNpcEnabled(config.renderNpc());
@@ -293,11 +296,11 @@ public class ModelPopoutPlugin extends Plugin
             @Override public void windowClosed(WindowEvent event)
             {
                 if (window != frame) return;
+                configManager.setConfiguration(ModelPopoutConfig.GROUP,"windowBounds",frame.normalBounds());
                 captures.close();
                 viewerVisible = false; textureReferences = null; clientTextures = TextureSet.EMPTY;
                 renderWake.stop(); presentWake.stop(); metricsWake.stop();
                 pendingFrame = null;
-                if (settingsPanel != null) settingsPanel.showPerformance("Viewer closed — capture and rendering stopped.");
                 npcTargets.clear();
                 clearModel();
                 window = null; panel = null;
@@ -309,13 +312,17 @@ public class ModelPopoutPlugin extends Plugin
             try { modelPanel.paintModels(modelGraphics); }
             finally { modelGraphics.dispose(); }
         });
-        frame.setPresentationListener(() -> { if (modelPanel.image != null) performance.presented(); });
         frame.installHoverControls();
         frame.applyBackgroundOpacity(config.backgroundOpacity());
         applyWindowStacking();
         frame.setMinimumSize(new Dimension(480, 300));
         frame.pack();
-        frame.setLocationByPlatform(true);
+        java.awt.Rectangle saved = configManager.getConfiguration(ModelPopoutConfig.GROUP,"windowBounds",java.awt.Rectangle.class);
+        if (saved != null && saved.width >= frame.getMinimumSize().width && saved.height >= frame.getMinimumSize().height
+            && java.util.Arrays.stream(java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices())
+                .anyMatch(device -> WindowGeometry.titleReachable(saved,device.getDefaultConfiguration().getBounds())))
+            frame.setBounds(saved);
+        else frame.setLocationByPlatform(true);
         frame.setVisible(true);
         clientThread.invokeLater(() -> { samplePlayer(); sampleTextures(); sampleHud(); });
     }
@@ -330,6 +337,8 @@ public class ModelPopoutPlugin extends Plugin
     @Subscribe
     public void onHitsplatApplied(HitsplatApplied event)
     {
+        InspectionManager currentInspectors = inspectors;
+        if (currentInspectors != null) currentInspectors.hitsplat(event);
         if (diagnosticNoHud || !running || !viewerVisible || !captures.active()) return;
         assert client.isClientThread();
         long generation = hudTracker.generation(), token = captures.epoch();
@@ -405,7 +414,7 @@ public class ModelPopoutPlugin extends Plugin
         boolean loggedIn = client.getGameState() == GameState.LOGGED_IN;
         captures.setLoggedIn(loggedIn);
         if (!loggedIn) return;
-        long token = captures.acquire(System.nanoTime(), false);
+        long token = captures.acquire(System.nanoTime());
         if (token < 0) return;
         long hudGeneration = hudTracker.generation();
         ModelSnapshot snapshot = null;
@@ -466,14 +475,13 @@ public class ModelPopoutPlugin extends Plugin
                 +" pose="+(next==null?"null":System.identityHashCode(next)+" vertices="+next.x.length+" faces="+next.a.length
                 +" alphaHash="+java.util.Arrays.hashCode(next.alpha))+" npcKey="+selectedNpcKey);
             if (!accepted) return;
-            if (next == null) { performance.capture(false); return; }
+            if (next == null) return;
             // Compare copied geometry/colors, since native Model instances can be shared or reused.
             boolean playerIdentityChanged = panel.sourcePlayerHudKey != capturedPlayerHudKey;
             if (paintDiagnostics && playerIdentityChanged) playerRebindings++;
             panel.sourcePlayerHudKey = capturedPlayerHudKey;
             boolean changed = viewState.updateModel(next, playerIdentityChanged);
             changed |= viewState.updateNpc(nextNpc,selectedNpcKey);
-            performance.capture(changed);
             changed |= viewState.updateTextures(textureCopy);
             textureClock.observe(sceneCycle,sceneObservedAt);
             if (changed)
@@ -576,10 +584,6 @@ public class ModelPopoutPlugin extends Plugin
         if (error != null) LOG.debug("Unable to render live view",error);
         else
         {
-            boolean newTextureFrame = job.request.textures.animated()
-                && (job.request.texturePhase != measuredTexturePhase || job.request.textures != measuredTextures);
-            performance.rendered(newTextureFrame);
-            measuredTexturePhase = job.request.texturePhase; measuredTextures = job.request.textures;
             if (valid && current(job.token))
             {
                 pendingFrame = new CompletedFrame(image,job.request,job.token,job.playerHudKey);
@@ -656,18 +660,10 @@ public class ModelPopoutPlugin extends Plugin
         }
     }
 
-    private static BufferedImage settingsIcon()
+    NavigationButton createLaunchButton()
     {
-        BufferedImage image = new BufferedImage(24,24,BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = image.createGraphics();
-        try
-        {
-            g.setColor(new Color(0xe2c36b));
-            for (int y = 5; y <= 19; y += 7) g.fillRect(3,y,18,2);
-            g.fillRect(7,2,3,8); g.fillRect(15,9,3,8); g.fillRect(10,16,3,7);
-        }
-        finally { g.dispose(); }
-        return image;
+        return NavigationButton.builder().tooltip("Open Model Popout")
+            .icon(icon()).priority(10).onClick(() -> SwingUtilities.invokeLater(this::openWindow)).build();
     }
 
     private static BufferedImage icon()
@@ -686,7 +682,7 @@ public class ModelPopoutPlugin extends Plugin
         return image;
     }
 
-    final class ModelPanel extends JPanel
+    final class ModelPanel extends ModelViewport
     {
         private BufferedImage image;
         private HudSnapshot hud;
@@ -697,47 +693,9 @@ public class ModelPopoutPlugin extends Plugin
         private boolean mirrorNpc;
         ModelPanel(ModelPopoutConfig initialConfig)
         {
+            super(ModelPopoutPlugin.this.viewState,ModelPopoutPlugin.this::requestRender);
             setPreferredSize(new Dimension(ModelRenderer.SIZE * (initialConfig.renderNpc() ? 2 : 1),ModelRenderer.SIZE));
-            setOpaque(false);
-            setDoubleBuffered(false);
-            MouseAdapter controls = new MouseAdapter()
-            {
-                private Point previous;
-                @Override public void mousePressed(MouseEvent event)
-                {
-                    if (SwingUtilities.isLeftMouseButton(event)) previous = event.getPoint();
-                }
-                @Override public void mouseReleased(MouseEvent event)
-                {
-                    if (SwingUtilities.isLeftMouseButton(event)) previous = null;
-                }
-                @Override public void mouseDragged(MouseEvent event)
-                {
-                    if (previous == null || (event.getModifiersEx() & MouseEvent.BUTTON1_DOWN_MASK) == 0) return;
-                    viewState.setCamera(viewState.camera().drag(event.getX() - previous.x, event.getY() - previous.y));
-                    previous = event.getPoint();
-                    requestRender();
-                }
-                @Override public void mouseWheelMoved(MouseWheelEvent event)
-                {
-                    viewState.setCamera(viewState.camera().wheel(event.getPreciseWheelRotation()));
-                    requestRender();
-                }
-            };
-            addMouseListener(controls);
-            addMouseMotionListener(controls);
-            addMouseWheelListener(controls);
         }
-        @Override public void repaint(long delay,int x,int y,int width,int height)
-        {
-            // HUD changes must invalidate the same whole compositing surface as model publication.
-            // A child-only dirty rectangle otherwise creates a separate, clipped native update.
-            java.awt.Container parent = getParent();
-            if (width > 0 && height > 0 && parent instanceof ViewerWindow.Surface) parent.repaint(delay);
-            else super.repaint(delay,x,y,width,height);
-        }
-
-        @Override protected void paintComponent(Graphics graphics) {}
 
         private void paintModels(Graphics graphics)
         {
